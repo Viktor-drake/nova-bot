@@ -169,8 +169,11 @@ module.exports = async function handler(req, res) {
       console.warn("saveMessage failed:", e.message);
     }
 
-    // Call AI
-    const reply = await converse(systemPrompt, history, userText);
+    // Call AI (haiku = fast, fits Vercel 10s timeout)
+    const reply = await converse(systemPrompt, history, userText, {
+      model: "anthropic/claude-haiku-4-5",
+      maxTokens: 1000,
+    });
 
     // Save assistant reply (safe)
     try {
