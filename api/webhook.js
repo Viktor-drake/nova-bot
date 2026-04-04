@@ -115,14 +115,23 @@ module.exports = async function handler(req, res) {
     // Show "typing..." while processing
     await sendTyping(chatId);
 
-    // Find participant in Notion
-    const participant = await findParticipantByChatId(chatId);
+    // Find participant in Notion (safe — errors don't crash the bot)
+    let participant = null;
+    try {
+      participant = await findParticipantByChatId(chatId);
+    } catch (e) {
+      console.warn("findParticipantByChatId failed:", e.message);
+    }
 
     // Build system prompt with participant context
     let systemPrompt = SYSTEM_PROMPT;
     if (participant) {
-      const profile = await getParticipantProfile(participant);
-      systemPrompt += `\n\n--- Профиль текущего участника ---\n${profile}`;
+      try {
+        const profile = await getParticipantProfile(participant);
+        systemPrompt += `\n\n--- Профиль текущего участника ---\n${profile}`;
+      } catch (e) {
+        console.warn("getParticipantProfile failed:", e.message);
+      }
     } else {
       systemPrompt += `\n\nЭтот пользователь НЕ зарегистрирован в сообществе (chat_id: ${chatId}). Предложи связаться с @Viktor_Drake для регистрации.`;
     }
@@ -130,8 +139,12 @@ module.exports = async function handler(req, res) {
     // Handle /profile command
     if (userText === "/profile") {
       if (participant) {
-        const profile = await getParticipantProfile(participant);
-        await sendMessage(chatId, `*Твой профиль:*\n\n${profile}`);
+        try {
+          const profile = await getParticipantProfile(participant);
+          await sendMessage(chatId, `*Твой профиль:*\n\n${profile}`);
+        } catch (e) {
+          await sendMessage(chatId, "Не удалось загрузить профиль. Попробуй позже.");
+        }
       } else {
         await sendMessage(
           chatId,
@@ -141,17 +154,30 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    // Load conversation history
-    const history = await getRecentMessages(chatId, 20);
+    // Load conversation history (safe)
+    let history = [];
+    try {
+      history = await getRecentMessages(chatId, 20);
+    } catch (e) {
+      console.warn("getRecentMessages failed:", e.message);
+    }
 
-    // Save user message
-    await saveMessage(chatId, "user", userText, participant?.id);
+    // Save user message (safe — don't crash if this fails)
+    try {
+      await saveMessage(chatId, "user", userText, participant?.id);
+    } catch (e) {
+      console.warn("saveMessage failed:", e.message);
+    }
 
     // Call AI
     const reply = await converse(systemPrompt, history, userText);
 
-    // Save assistant reply
-    await saveMessage(chatId, "assistant", reply, participant?.id);
+    // Save assistant reply (safe)
+    try {
+      await saveMessage(chatId, "assistant", reply, participant?.id);
+    } catch (e) {
+      console.warn("saveMessage assistant failed:", e.message);
+    }
 
     // Send reply to user
     await sendMessage(chatId, reply);
