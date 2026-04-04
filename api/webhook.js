@@ -1,11 +1,5 @@
 const { sendMessage, sendTyping } = require("../lib/telegram");
 const { converse } = require("../lib/ai");
-const {
-  findParticipantByChatId,
-  saveMessage,
-  getRecentMessages,
-  getParticipantProfile,
-} = require("../lib/notion");
 
 // --- System prompt for Nova ---
 const SYSTEM_PROMPT = `Ты — Nova, AI-ассистент бизнес-сообщества NextGen Club.
@@ -25,7 +19,7 @@ const SYSTEM_PROMPT = `Ты — Nova, AI-ассистент бизнес-соо�
 
 Правила:
 - Если участник не зарегистрирован — предложи связаться с администратором @Viktor_Drake
-- Никогда не раскрывай конфиденциальные данные других участников (блок потребностей скрыт)
+- Никогда не раскрывай конфиденциальные данные других участников
 - Если не знаешь ответ — честно скажи и предложи обратиться к администратору`;
 
 // --- Dedup: track processed message IDs ---
@@ -44,12 +38,10 @@ function isDuplicate(messageId) {
 
 // --- Main webhook handler ---
 module.exports = async function handler(req, res) {
-  // Only accept POST
   if (req.method !== "POST") {
     return res.status(200).json({ ok: true, method: req.method });
   }
 
-  // Verify Telegram secret
   const secret = req.headers["x-telegram-bot-api-secret-token"];
   if (secret !== process.env.API_SECRET) {
     return res.status(403).json({ error: "Forbidden" });
@@ -57,9 +49,7 @@ module.exports = async function handler(req, res) {
 
   const update = req.body;
 
-  // Handle callback queries (button presses)
   if (update.callback_query) {
-    // TODO: handle button callbacks
     return res.status(200).json({ ok: true });
   }
 
@@ -71,13 +61,12 @@ module.exports = async function handler(req, res) {
   const chatId = message.chat.id;
   const messageId = message.message_id;
 
-  // Dedup
   if (isDuplicate(messageId)) {
     return res.status(200).json({ ok: true, duplicate: true });
   }
 
   try {
-    // Handle /start command
+    // --- /start ---
     if (message.text === "/start") {
       await sendMessage(
         chatId,
@@ -86,117 +75,60 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    // Handle /help command
+    // --- /help ---
     if (message.text === "/help") {
       await sendMessage(
         chatId,
-        `*Что я умею:*\n\n/start — начать\n/profile — твой профиль\n/help — эта справка\n\nИли просто напиши вопрос — я отвечу.`
+        `*Что я умею:*\n\n/start — начать\n/help — эта справка\n\nИли просто напиши вопрос — я отвечу.`
       );
       return res.status(200).json({ ok: true });
     }
 
-    // Get user text (or caption for photos)
-    let userText = message.text || message.caption || "";
-
-    // Handle voice messages (placeholder — Whisper will be added later)
+    // --- Voice placeholder ---
     if (message.voice || message.audio) {
       await sendMessage(
         chatId,
-        "Голосовые сообщения пока в разработке. Напиши текстом, пожалуйста."
+        "Голосовые сообщения пока в разработке. Напиши текстом."
       );
       return res.status(200).json({ ok: true });
     }
 
-    // Skip empty messages
-    if (!userText.trim()) {
+    const userText = (message.text || message.caption || "").trim();
+    if (!userText) {
       return res.status(200).json({ ok: true });
     }
 
-    // Show "typing..." while processing
+    // Show typing
     await sendTyping(chatId);
 
-    // Find participant in Notion (safe — errors don't crash the bot)
-    let participant = null;
-    try {
-      participant = await findParticipantByChatId(chatId);
-    } catch (e) {
-      console.warn("findParticipantByChatId failed:", e.message);
-    }
+    // Call AI — NO Notion in the path, pure speed
+    const reply = await converse(
+      SYSTEM_PROMPT,
+      [], // no history for now — keeps it fast
+      userText,
+      { model: "anthropic/claude-haiku-4-5", maxTokens: 800 }
+    );
 
-    // Build system prompt with participant context
-    let systemPrompt = SYSTEM_PROMPT;
-    if (participant) {
-      try {
-        const profile = await getParticipantProfile(participant);
-        systemPrompt += `\n\n--- Профиль текущего участника ---\n${profile}`;
-      } catch (e) {
-        console.warn("getParticipantProfile failed:", e.message);
-      }
-    } else {
-      systemPrompt += `\n\nЭтот пользователь НЕ зарегистрирован в сообществе (chat_id: ${chatId}). Предложи связаться с @Viktor_Drake для регистрации.`;
-    }
-
-    // Handle /profile command
-    if (userText === "/profile") {
-      if (participant) {
-        try {
-          const profile = await getParticipantProfile(participant);
-          await sendMessage(chatId, `*Твой профиль:*\n\n${profile}`);
-        } catch (e) {
-          await sendMessage(chatId, "Не удалось загрузить профиль. Попробуй позже.");
-        }
-      } else {
-        await sendMessage(
-          chatId,
-          "Ты ещё не зарегистрирован. Свяжись с @Viktor_Drake для регистрации."
-        );
-      }
-      return res.status(200).json({ ok: true });
-    }
-
-    // Load conversation history (safe)
-    let history = [];
-    try {
-      history = await getRecentMessages(chatId, 20);
-    } catch (e) {
-      console.warn("getRecentMessages failed:", e.message);
-    }
-
-    // Save user message (safe — don't crash if this fails)
-    try {
-      await saveMessage(chatId, "user", userText, participant?.id);
-    } catch (e) {
-      console.warn("saveMessage failed:", e.message);
-    }
-
-    // Call AI (haiku = fast, fits Vercel 10s timeout)
-    const reply = await converse(systemPrompt, history, userText, {
-      model: "anthropic/claude-haiku-4-5",
-      maxTokens: 1000,
-    });
-
-    // Save assistant reply (safe)
-    try {
-      await saveMessage(chatId, "assistant", reply, participant?.id);
-    } catch (e) {
-      console.warn("saveMessage assistant failed:", e.message);
-    }
-
-    // Send reply to user
+    // Send reply ASAP
     await sendMessage(chatId, reply);
 
-    return res.status(200).json({ ok: true });
+    // Respond to Vercel immediately
+    res.status(200).json({ ok: true });
+
+    // --- Save to Notion in background (fire-and-forget) ---
+    // This runs AFTER the response is sent, won't affect timeout
+    try {
+      const { saveMessage } = require("../lib/notion");
+      await saveMessage(chatId, "user", userText);
+      await saveMessage(chatId, "assistant", reply);
+    } catch (e) {
+      console.warn("Background Notion save failed:", e.message);
+    }
   } catch (error) {
     console.error("Webhook error:", error);
-
-    // Try to notify user about error
     try {
-      await sendMessage(
-        chatId,
-        "Произошла ошибка. Попробуй ещё раз через минуту."
-      );
+      await sendMessage(chatId, "Произошла ошибка. Попробуй ещё раз.");
     } catch (_) {}
-
     return res.status(200).json({ ok: false, error: error.message });
   }
 };

@@ -1,8 +1,7 @@
 {
-  "crons": [
-    {
-      "path": "/api/match",
-      "schedule": "*/15 * * * *"
+  "functions": {
+    "api/*.js": {
+      "maxDuration": 30
     }
-  ]
+  }
 }
