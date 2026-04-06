@@ -1,26 +1,23 @@
 const { sendMessage, sendTyping } = require("../lib/telegram");
 const { converse } = require("../lib/ai");
+const { getCommunitySnapshot } = require("../lib/notion");
 
-// --- System prompt for Nova ---
-const SYSTEM_PROMPT = `Ты — Nova, AI-ассистент бизнес-сообщества NextGen Club.
+// --- Base system prompt for Nova ---
+const SYSTEM_PROMPT_BASE = `Ты — Nova, AI-ассистент бизнес-сообщества NextGen Club.
 
-Твоя роль:
-- Помогать участникам находить нужных людей в сообществе
-- Рекомендовать инструменты и решения для бизнес-задач
-- Отвечать на вопросы о сообществе
-- Помогать декомпозировать задачи
+Твоя главная задача — находить связки между участниками сообщества:
+- Если пользователь ищет ресурс/услугу/специалиста — найди подходящего человека из базы ниже
+- Если есть подходящий участник — назови имя, telegram, что у него есть, и почему он подходит
+- Если ничего не нашлось — честно скажи "сейчас в базе нет, попробуй спросить в чате клуба или у @Viktor_Drake"
 
-Стиль общения:
-- Дружелюбный, но профессиональный
-- Краткий и конкретный — не лей воду
-- Используй эмодзи умеренно
-- Отвечай на русском языке
-- Обращайся на "ты"
+Стиль:
+- Дружелюбный, но конкретный
+- Без воды
+- Имена людей и @username — обязательно когда есть совпадение
+- Эмодзи умеренно
+- Русский язык, на "ты"
 
-Правила:
-- Если участник не зарегистрирован — предложи связаться с администратором @Viktor_Drake
-- Никогда не раскрывай конфиденциальные данные других участников
-- Если не знаешь ответ — честно скажи и предложи обратиться к администратору`;
+Никогда не выдумывай людей, ресурсы или контакты — используй только данные из базы ниже.`;
 
 // --- Main webhook handler ---
 module.exports = async function handler(req, res) {
@@ -40,17 +37,16 @@ module.exports = async function handler(req, res) {
   }
 
   const chatId = message.chat.id;
-  console.log(`[Nova] msg=${message.message_id} text="${(message.text || "").slice(0, 50)}"`);
+  console.log(`[Nova] msg=${message.message_id} text="${(message.text || "").slice(0, 60)}"`);
 
   try {
-    // --- Commands ---
     if (message.text === "/start") {
-      await sendMessage(chatId, `Привет! Я *Nova* — AI-ассистент NextGen Club.\n\nЯ могу:\n- Найти нужного человека в сообществе\n- Помочь с бизнес-задачей\n- Подсказать инструмент\n\nПросто напиши свой вопрос!`);
+      await sendMessage(chatId, `Привет! Я *Nova* — AI-ассистент NextGen Club.\n\nЯ могу:\n- Найти нужного человека в сообществе\n- Подобрать ресурс или специалиста\n- Помочь с бизнес-задачей\n\nПросто напиши свой вопрос!`);
       return res.status(200).json({ ok: true });
     }
 
     if (message.text === "/help") {
-      await sendMessage(chatId, `*Что я умею:*\n\n/start — начать\n/help — эта справка\n\nИли просто напиши вопрос — я отвечу.`);
+      await sendMessage(chatId, `*Что я умею:*\n\n/start — начать\n/help — справка\n\nИли просто напиши вопрос — я найду людей и решения в сообществе.`);
       return res.status(200).json({ ok: true });
     }
 
@@ -64,24 +60,35 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    // Show typing
     sendTyping(chatId).catch(() => {});
 
-    // Call AI
-    console.log(`[Nova] calling OpenRouter...`);
+    // Load community snapshot in parallel with the AI call setup
     const t0 = Date.now();
+    let snapshot = "";
+    try {
+      snapshot = await getCommunitySnapshot();
+      console.log(`[Nova] snapshot loaded in ${Date.now() - t0}ms (${snapshot.length} chars)`);
+    } catch (e) {
+      console.warn(`[Nova] snapshot failed: ${e.message}`);
+    }
+
+    const systemPrompt = snapshot
+      ? `${SYSTEM_PROMPT_BASE}\n\n=== БАЗА УЧАСТНИКОВ СООБЩЕСТВА ===\n${snapshot}\n=== КОНЕЦ БАЗЫ ===\n\nИспользуй ТОЛЬКО эту базу для рекомендаций конкретных людей.`
+      : SYSTEM_PROMPT_BASE;
+
+    console.log(`[Nova] calling OpenRouter, prompt=${systemPrompt.length} chars`);
+    const t1 = Date.now();
     const reply = await converse(
-      SYSTEM_PROMPT,
+      systemPrompt,
       [],
       userText,
-      { model: "anthropic/claude-haiku-4-5", maxTokens: 600 }
+      { model: "anthropic/claude-haiku-4-5", maxTokens: 800 }
     );
-    console.log(`[Nova] AI replied in ${Date.now() - t0}ms, len=${reply.length}`);
+    console.log(`[Nova] AI replied in ${Date.now() - t1}ms, len=${reply.length}`);
 
-    // Send reply
-    const t1 = Date.now();
+    const t2 = Date.now();
     await sendMessage(chatId, reply);
-    console.log(`[Nova] sent to TG in ${Date.now() - t1}ms`);
+    console.log(`[Nova] sent to TG in ${Date.now() - t2}ms`);
 
     return res.status(200).json({ ok: true });
   } catch (error) {
