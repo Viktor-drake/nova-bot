@@ -1,6 +1,24 @@
 {
+  "crons": [
+    {
+      "path": "/api/find-matches",
+      "schedule": "0 */6 * * *"
+    }
+  ],
   "functions": {
-    "api/*.js": {
+    "api/webhook.js": {
+      "maxDuration": 60
+    },
+    "api/find-matches.js": {
+      "maxDuration": 300
+    },
+    "api/match.js": {
+      "maxDuration": 300
+    },
+    "api/test.js": {
+      "maxDuration": 30
+    },
+    "api/setup.js": {
       "maxDuration": 30
     }
   }
