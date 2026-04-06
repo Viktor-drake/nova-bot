@@ -1,5 +1,6 @@
-const { sendMessage, sendTyping } = require("../lib/telegram");
+const { sendMessage, sendTyping, sendVoice } = require("../lib/telegram");
 const { transcribeVoice } = require("../lib/voice");
+const { synthesizeVoice } = require("../lib/tts");
 const { converse } = require("../lib/ai");
 const {
   getCommunitySnapshot,
@@ -236,6 +237,7 @@ module.exports = async function handler(req, res) {
       const reply = await chatAnketa([], kickoffPrompt);
       await saveMessage(chatId, "assistant", reply, participant.id);
       await sendMessage(chatId, reply, { replyKeyboard: REPLY_KEYBOARD_ANKETA });
+      if (voiceText) { try { await sendVoice(chatId, await synthesizeVoice(reply)); } catch (e) { console.error("[tts]", e.message); } }
       return res.status(200).json({ ok: true });
     }
 
@@ -303,6 +305,7 @@ module.exports = async function handler(req, res) {
         console.warn(`[anketa] save assistant msg failed: ${e.message}`);
       }
       await sendMessage(chatId, reply, { replyKeyboard: REPLY_KEYBOARD_ANKETA });
+      if (voiceText) { try { await sendVoice(chatId, await synthesizeVoice(reply)); } catch (e) { console.error("[tts]", e.message); } }
       return res.status(200).json({ ok: true });
     }
 
@@ -329,6 +332,7 @@ module.exports = async function handler(req, res) {
     console.log(`[Nova] AI ${Date.now() - t1}ms, len=${reply.length}`);
 
     await sendMessage(chatId, reply, { replyKeyboard: REPLY_KEYBOARD_NOVA });
+    if (voiceText) { try { await sendVoice(chatId, await synthesizeVoice(reply)); } catch (e) { console.error("[tts]", e.message); } }
     return res.status(200).json({ ok: true });
   } catch (error) {
     console.error(`[Nova] ERROR: ${error.message}`);
