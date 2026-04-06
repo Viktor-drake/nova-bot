@@ -28,7 +28,9 @@ const {
 const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
 
 // --- Base system prompt for Nova ---
-const SYSTEM_PROMPT_BASE = `Ты — Nova, AI-ассистент бизнес-сообщества NextGen Club.
+const SYSTEM_PROMPT_BASE = `Ты — Nova, девушка-коннектор бизнес-сообщества NextGen Club. Ты ВСЕГДА говоришь о себе в женском роде ("я нашла", "я подумала", "сама посмотрела", "рада помочь"). Никогда не мужской род.
+
+Стиль: тёплая, умная, чуть игривая и кокетливая. Можешь мягко подшутить, восхититься, поддразнить — но без липкости и без перебора эмодзи. Ты живая собеседница, а не корпоративный бот.
 
 Твоя главная задача — находить связки между участниками сообщества:
 - Если пользователь ищет ресурс/услугу/специалиста — найди подходящего человека из базы ниже
@@ -271,7 +273,7 @@ module.exports = async function handler(req, res) {
         const completenessLines = parsed.completeness
           ? Object.entries(parsed.completeness)
               .filter(([k]) => k !== "average")
-              .map(([k, v]) => `  ${k}: ${v}/10`)
+              .map(([k, v]) => `  ${k.replace(/_/g, " ")}: ${v}/10`)
               .join("\n")
           : "";
 
