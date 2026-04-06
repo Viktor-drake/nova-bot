@@ -326,7 +326,7 @@ module.exports = async function handler(req, res) {
   } catch (error) {
     console.error(`[Nova] ERROR: ${error.message}`);
     try {
-      await sendMessage(chatId, "Произошла ошибка. Попробуй ещё раз.");
+      await sendMessage(chatId, "❌ DEBUG: " + error.message + "\n\nstack: " + (error.stack||"").split("\n").slice(0,3).join(" | "));
     } catch (_) {}
     return res.status(200).json({ ok: false, error: error.message });
   }
