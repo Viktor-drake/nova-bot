@@ -232,9 +232,15 @@ module.exports = async function handler(req, res) {
     const KB_ANKETA = () => anketaKeyboard(voiceOff);
     const maybeVoice = async (text) => {
       if (voiceText && !voiceOff) {
-        try { await sendVoice(chatId, await synthesizeVoice(text)); }
-        catch (e) { console.error("[tts]", e.message); }
+        try { await sendVoice(chatId, await synthesizeVoice(text)); return true; }
+        catch (e) { console.error("[tts]", e.message); return false; }
       }
+      return false;
+    };
+    // Если юзер прислал гс и голос вкл — отвечаем ТОЛЬКО голосом, без текста
+    const respond = async (reply, kb) => {
+      const voiced = await maybeVoice(reply);
+      if (!voiced) await sendMessage(chatId, reply, { replyKeyboard: kb });
     };
 
     // --- Button: toggle voice ---
@@ -272,8 +278,7 @@ module.exports = async function handler(req, res) {
         : "Старт анкеты. Поприветствуй меня тёплым тоном, объясни зачем мы это делаем, и задай первый вопрос блока А (имя, город).";
       const reply = await chatAnketa([], kickoffPrompt);
       await saveMessage(chatId, "assistant", reply, participant.id);
-      await sendMessage(chatId, reply, { replyKeyboard: KB_ANKETA() });
-      await maybeVoice(reply);
+      await respond(reply, KB_ANKETA());
       return res.status(200).json({ ok: true });
     }
 
@@ -340,8 +345,7 @@ module.exports = async function handler(req, res) {
       } catch (e) {
         console.warn(`[anketa] save assistant msg failed: ${e.message}`);
       }
-      await sendMessage(chatId, reply, { replyKeyboard: KB_ANKETA() });
-      await maybeVoice(reply);
+      await respond(reply, KB_ANKETA());
       return res.status(200).json({ ok: true });
     }
 
@@ -367,8 +371,7 @@ module.exports = async function handler(req, res) {
     });
     console.log(`[Nova] AI ${Date.now() - t1}ms, len=${reply.length}`);
 
-    await sendMessage(chatId, reply, { replyKeyboard: KB_NOVA() });
-    await maybeVoice(reply);
+    await respond(reply, KB_NOVA());
     return res.status(200).json({ ok: true });
   } catch (error) {
     console.error(`[Nova] ERROR: ${error.message}`);
