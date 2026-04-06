@@ -197,7 +197,6 @@ module.exports = async function handler(req, res) {
       try {
         const fileId = (message.voice || message.audio).file_id;
         voiceText = await transcribeVoice(fileId);
-        await sendMessage(chatId, `🎤 ${voiceText}`);
       } catch (e) {
         await sendMessage(chatId, `Не смог расшифровать голос: ${e.message}`);
         return res.status(200).json({ ok: true });
