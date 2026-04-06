@@ -1,4 +1,5 @@
 const { sendMessage, sendTyping } = require("../lib/telegram");
+const { transcribeVoice } = require("../lib/voice");
 const { converse } = require("../lib/ai");
 const {
   getCommunitySnapshot,
@@ -190,13 +191,20 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    // --- Voice placeholder ---
+    // --- Voice transcription ---
+    let voiceText = null;
     if (message.voice || message.audio) {
-      await sendMessage(chatId, "Голосовые пока в разработке. Напиши текстом.");
-      return res.status(200).json({ ok: true });
+      try {
+        const fileId = (message.voice || message.audio).file_id;
+        voiceText = await transcribeVoice(fileId);
+        await sendMessage(chatId, `🎤 ${voiceText}`);
+      } catch (e) {
+        await sendMessage(chatId, `Не смог расшифровать голос: ${e.message}`);
+        return res.status(200).json({ ok: true });
+      }
     }
 
-    const userText = text || (message.caption || "").trim();
+    const userText = voiceText || text || (message.caption || "").trim();
     if (!userText) return res.status(200).json({ ok: true });
 
     // --- Ensure participant + load mode ---
@@ -326,7 +334,7 @@ module.exports = async function handler(req, res) {
   } catch (error) {
     console.error(`[Nova] ERROR: ${error.message}`);
     try {
-      await sendMessage(chatId, "❌ DEBUG: " + error.message + "\n\nstack: " + (error.stack||"").split("\n").slice(0,3).join(" | "));
+      await sendMessage(chatId, "Произошла ошибка. Попробуй ещё раз.");
     } catch (_) {}
     return res.status(200).json({ ok: false, error: error.message });
   }
