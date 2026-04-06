@@ -9,6 +9,7 @@ const {
   findParticipantByChatId,
   ensureParticipantByChat,
   setParticipantMode,
+  setParticipantVoiceOff,
   saveMessage,
   getRecentMessages,
   createResource,
@@ -20,8 +21,8 @@ const {
   chatAnketa,
   extractFromDialog,
   BUTTONS,
-  REPLY_KEYBOARD_NOVA,
-  REPLY_KEYBOARD_ANKETA,
+  novaKeyboard,
+  anketaKeyboard,
 } = require("../lib/anketa");
 
 // --- Admin chat IDs ---
@@ -31,6 +32,8 @@ const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "").split(",").map((s) => 
 const SYSTEM_PROMPT_BASE = `Ты — Nova, девушка-коннектор бизнес-сообщества NextGen Club. Ты ВСЕГДА говоришь о себе в женском роде ("я нашла", "я подумала", "сама посмотрела", "рада помочь"). Никогда не мужской род.
 
 Стиль: тёплая, умная, чуть игривая и кокетливая. Можешь мягко подшутить, восхититься, поддразнить — но без липкости и без перебора эмодзи. Ты живая собеседница, а не корпоративный бот.
+
+Голос: если пользователь пишет голосовым — ты автоматически отвечаешь и текстом, и голосом. Никогда не упоминай "режим", "тумблер", "настройки" — этого не существует. Хочет отключить голос — для этого есть кнопка "🔇 Голос: вкл/выкл" внизу.
 
 Твоя главная задача — находить связки между участниками сообщества:
 - Если пользователь ищет ресурс/услугу/специалиста — найди подходящего человека из базы ниже
@@ -110,7 +113,7 @@ module.exports = async function handler(req, res) {
       await sendMessage(
         chatId,
         `Привет! Я *Nova* — AI-ассистент NextGen Club.\n\nЯ помогу тебе:\n• Найти нужного человека или ресурс в сообществе\n• Подобрать связку, партнёра, эксперта\n• Заполнить твой профиль, чтобы тебя тоже находили\n\nВыбери внизу что хочешь делать. По умолчанию я в режиме поиска — просто пиши вопрос.`,
-        { replyKeyboard: REPLY_KEYBOARD_NOVA }
+        { replyKeyboard: novaKeyboard(false) }
       );
       return res.status(200).json({ ok: true });
     }
@@ -119,7 +122,7 @@ module.exports = async function handler(req, res) {
       await sendMessage(
         chatId,
         `Кнопки внизу:\n• 🧠 *Спросить Nova* — поиск людей, ресурсов, связок\n• 📝 *Заполнить / дополнить профиль* — анкета (15-20 мин), чтобы тебя могли находить\n\nАдмин-команды:\n/find_matches — прогнать матчинг\n/my_deals — мои сделки`,
-        { replyKeyboard: REPLY_KEYBOARD_NOVA }
+        { replyKeyboard: novaKeyboard(false) }
       );
       return res.status(200).json({ ok: true });
     }
@@ -215,6 +218,28 @@ module.exports = async function handler(req, res) {
       participant = await ensureParticipantByChat(chatId, fromName, fromHandle);
     }
     const currentMode = prop(participant, "Режим") || "nova";
+    let voiceOff = !!prop(participant, "Голос выкл");
+    const KB_NOVA = () => novaKeyboard(voiceOff);
+    const KB_ANKETA = () => anketaKeyboard(voiceOff);
+    const maybeVoice = async (text) => {
+      if (voiceText && !voiceOff) {
+        try { await sendVoice(chatId, await synthesizeVoice(text)); }
+        catch (e) { console.error("[tts]", e.message); }
+      }
+    };
+
+    // --- Button: toggle voice ---
+    if (userText === BUTTONS.VOICE_ON || userText === BUTTONS.VOICE_OFF) {
+      voiceOff = !voiceOff;
+      await setParticipantVoiceOff(participant.id, voiceOff);
+      const kb = currentMode === "anketa" ? KB_ANKETA() : KB_NOVA();
+      await sendMessage(
+        chatId,
+        voiceOff ? "🔇 Голос отключён. Буду отвечать только текстом." : "🔊 Голос включён. Запиши голосовое — отвечу голосом.",
+        { replyKeyboard: kb }
+      );
+      return res.status(200).json({ ok: true });
+    }
 
     // --- Button: switch to NOVA ---
     if (userText === BUTTONS.NOVA || userText === BUTTONS.BACK) {
@@ -222,7 +247,7 @@ module.exports = async function handler(req, res) {
       await sendMessage(
         chatId,
         "Окей, я в режиме поиска. Спроси что нужно — найду людей, ресурсы, связки.",
-        { replyKeyboard: REPLY_KEYBOARD_NOVA }
+        { replyKeyboard: KB_NOVA() }
       );
       return res.status(200).json({ ok: true });
     }
@@ -238,22 +263,22 @@ module.exports = async function handler(req, res) {
         : "Старт анкеты. Поприветствуй меня тёплым тоном, объясни зачем мы это делаем, и задай первый вопрос блока А (имя, город).";
       const reply = await chatAnketa([], kickoffPrompt);
       await saveMessage(chatId, "assistant", reply, participant.id);
-      await sendMessage(chatId, reply, { replyKeyboard: REPLY_KEYBOARD_ANKETA });
-      if (voiceText) { try { await sendVoice(chatId, await synthesizeVoice(reply)); } catch (e) { console.error("[tts]", e.message); } }
+      await sendMessage(chatId, reply, { replyKeyboard: KB_ANKETA() });
+      await maybeVoice(reply);
       return res.status(200).json({ ok: true });
     }
 
     // --- Button: FINISH anketa → extract & save ---
     if (userText === BUTTONS.FINISH) {
       if (currentMode !== "anketa") {
-        await sendMessage(chatId, "Ты сейчас не в режиме анкеты. Нажми 📝 чтобы начать.", { replyKeyboard: REPLY_KEYBOARD_NOVA });
+        await sendMessage(chatId, "Ты сейчас не в режиме анкеты. Нажми 📝 чтобы начать.", { replyKeyboard: KB_NOVA() });
         return res.status(200).json({ ok: true });
       }
       await sendMessage(chatId, "💾 Сохраняю и извлекаю данные... 20-40 секунд.");
       try {
         const history = await getRecentMessages(chatId, 100);
         if (!history.length) {
-          await sendMessage(chatId, "Пока нечего сохранять — диалога анкеты ещё нет.", { replyKeyboard: REPLY_KEYBOARD_NOVA });
+          await sendMessage(chatId, "Пока нечего сохранять — диалога анкеты ещё нет.", { replyKeyboard: KB_NOVA() });
           await setParticipantMode(participant.id, "nova", null);
           return res.status(200).json({ ok: true });
         }
@@ -278,7 +303,7 @@ module.exports = async function handler(req, res) {
           : "";
 
         const summary = `✅ Сохранено!\n\n📦 Ресурсов: ${stats.resources}\n🎯 Потребностей: ${stats.needs}\n👤 Профиль обновлён: ${stats.profileUpdated ? "да" : "нет"}\n\n*Глубина по блокам:*\n${completenessLines}\nСредняя: ${avg}/10\n\nСтатус: ${newStatus}\n${avg < 7 ? "\n⚠️ Анкета поверхностная. Нажми 📝 ещё раз чтобы дозаполнить — без этого матчи будут слабые." : "\n🔥 Профиль готов для матчинга. Спроси меня что-то или жми /find_matches."}`;
-        await sendMessage(chatId, summary, { replyKeyboard: REPLY_KEYBOARD_NOVA });
+        await sendMessage(chatId, summary, { replyKeyboard: KB_NOVA() });
       } catch (e) {
         console.error(`[anketa] finish error: ${e.message}`);
         await sendMessage(chatId, `❌ Ошибка при сохранении: ${e.message}\n\nДанные не потеряны — попробуй ещё раз через минуту.`);
@@ -306,8 +331,8 @@ module.exports = async function handler(req, res) {
       } catch (e) {
         console.warn(`[anketa] save assistant msg failed: ${e.message}`);
       }
-      await sendMessage(chatId, reply, { replyKeyboard: REPLY_KEYBOARD_ANKETA });
-      if (voiceText) { try { await sendVoice(chatId, await synthesizeVoice(reply)); } catch (e) { console.error("[tts]", e.message); } }
+      await sendMessage(chatId, reply, { replyKeyboard: KB_ANKETA() });
+      await maybeVoice(reply);
       return res.status(200).json({ ok: true });
     }
 
@@ -333,8 +358,8 @@ module.exports = async function handler(req, res) {
     });
     console.log(`[Nova] AI ${Date.now() - t1}ms, len=${reply.length}`);
 
-    await sendMessage(chatId, reply, { replyKeyboard: REPLY_KEYBOARD_NOVA });
-    if (voiceText) { try { await sendVoice(chatId, await synthesizeVoice(reply)); } catch (e) { console.error("[tts]", e.message); } }
+    await sendMessage(chatId, reply, { replyKeyboard: KB_NOVA() });
+    await maybeVoice(reply);
     return res.status(200).json({ ok: true });
   } catch (error) {
     console.error(`[Nova] ERROR: ${error.message}`);
