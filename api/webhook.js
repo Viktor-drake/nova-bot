@@ -73,36 +73,33 @@ module.exports = async function handler(req, res) {
         await sendMessage(chatId, "Эта команда только для администратора.");
         return res.status(200).json({ ok: true });
       }
-      await sendMessage(chatId, "🔍 Запускаю поиск связок... Это займёт 20-40 секунд.");
-      // Respond to Vercel immediately, run matcher in background
-      res.status(200).json({ ok: true, triggered: "find_matches" });
+      await sendMessage(chatId, "🔍 Запускаю поиск связок... Это займёт 20-40 секунд, подожди.");
 
+      // Run inline (Pro plan = 60s timeout, find-matches takes ~30-40s)
       try {
-        // Invoke find-matches handler inline
         const findHandler = require("./find-matches");
         const fakeReq = { method: "POST", query: { secret: process.env.API_SECRET }, headers: {} };
+        let result = null;
         const fakeRes = {
-          _status: 200,
-          _body: null,
-          status(s) { this._status = s; return this; },
-          json(b) { this._body = b; return this; },
+          status() { return this; },
+          json(b) { result = b; return this; },
         };
         await findHandler(fakeReq, fakeRes);
-        const result = fakeRes._body;
 
         if (result?.ok) {
           const list = (result.matches || []).map((m, i) => `${i + 1}. ${m}`).join("\n");
           await sendMessage(
             chatId,
-            `✅ Поиск завершён за ${Math.round(result.ms / 1000)}с\n\nНайдено: ${result.found}\nЗаписано в Notion: ${result.written}\nПропущено: ${result.skipped}\n\n*Матчи:*\n${list || "(пусто)"}\n\nОткрой базу "🔗 Матчи" в Notion чтобы увидеть детали.`
+            `✅ Поиск завершён за ${Math.round(result.ms / 1000)}с\n\nНайдено: ${result.found}\nЗаписано в Notion: ${result.written}\nПропущено: ${result.skipped}\n\n*Матчи:*\n${list || "(пусто)"}\n\nОткрой базу "🔗 Матчи" в Notion — там детали и можно отметить "Я познакомил".`
           );
         } else {
           await sendMessage(chatId, `❌ Ошибка матчинга: ${result?.error || "unknown"}`);
         }
       } catch (e) {
+        console.error("[find_matches] error:", e.message);
         await sendMessage(chatId, `❌ Ошибка: ${e.message}`);
       }
-      return;
+      return res.status(200).json({ ok: true });
     }
 
     // --- Admin: my deals ---
