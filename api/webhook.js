@@ -1,7 +1,7 @@
 const { sendMessage, sendTyping, sendVoice } = require("../lib/telegram");
 const { transcribeVoice } = require("../lib/voice");
 const { synthesizeVoice } = require("../lib/tts");
-const { converse } = require("../lib/ai");
+const { converse, getLastUsage } = require("../lib/ai");
 const {
   getCommunitySnapshot,
   notion,
@@ -24,6 +24,13 @@ const {
   novaKeyboard,
   anketaKeyboard,
 } = require("../lib/anketa");
+const {
+  checkPerMessage,
+  checkAndConsumeQuota,
+  recordTokens,
+  getModelMode,
+  ensureRole,
+} = require("../lib/limits");
 
 // --- Admin chat IDs ---
 const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -101,10 +108,27 @@ module.exports = async function handler(req, res) {
   if (!message) return res.status(200).json({ ok: true });
 
   const chatId = message.chat.id;
-  const text = (message.text || "").trim();
+  const rawText = (message.text || "").trim();
   const fromName = message.from?.first_name || message.from?.username || `Гость ${chatId}`;
   const fromHandle = message.from?.username || "";
-  console.log(`[Nova] msg=${message.message_id} chat=${chatId} text="${text.slice(0, 60)}"`);
+  console.log(`[Nova] msg=${message.message_id} chat=${chatId} text="${rawText.slice(0, 60)}"`);
+
+  // --- Per-message guard (anti-flood, длина, cooldown) ---
+  // Применяется ко ВСЕМ входящим, кроме голосовых (для голоса работает квота)
+  let text = rawText;
+  if (rawText) {
+    const guard = checkPerMessage(chatId, rawText);
+    if (!guard.ok) {
+      if (guard.reason) {
+        try { await sendMessage(chatId, guard.reason); } catch (_) {}
+      }
+      return res.status(200).json({ ok: true, blocked: "guard" });
+    }
+    text = guard.text;
+    if (guard.truncated) {
+      try { await sendMessage(chatId, "⚠️ Сообщение длинноватое, я прочла первые 2000 символов."); } catch (_) {}
+    }
+  }
 
   try {
     // --- /start ---
@@ -226,12 +250,16 @@ module.exports = async function handler(req, res) {
     if (!participant) {
       participant = await ensureParticipantByChat(chatId, fromName, fromHandle);
     }
+    // Дефолтная роль для новых — Гость (Founder/VIP проставляются вручную)
+    ensureRole(participant, "Гость").catch(() => {});
     const currentMode = prop(participant, "Режим") || "nova";
     let voiceOff = !!prop(participant, "Голос выкл");
     const KB_NOVA = () => novaKeyboard(voiceOff);
     const KB_ANKETA = () => anketaKeyboard(voiceOff);
     const maybeVoice = async (text) => {
-      if (voiceText && !voiceOff) {
+      // Глобальный downgrade месячного капа отключает TTS
+      const mm = getModelMode();
+      if (voiceText && !voiceOff && mm.allowTTS) {
         try { await sendVoice(chatId, await synthesizeVoice(text)); return true; }
         catch (e) { console.error("[tts]", e.message); return false; }
       }
@@ -325,6 +353,20 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
+    // --- Quota check (только для AI-сообщений, не для кнопок/команд) ---
+    const quotaKind = voiceText ? "voice" : "text";
+    const quota = await checkAndConsumeQuota(participant, quotaKind);
+    if (!quota.ok) {
+      const kb = currentMode === "anketa" ? KB_ANKETA() : KB_NOVA();
+      await sendMessage(chatId, quota.reason, { replyKeyboard: kb });
+      return res.status(200).json({ ok: true, blocked: "quota" });
+    }
+    // Текущий режим модели с учётом месячного капа
+    const modelMode = getModelMode();
+    if (modelMode.level !== "normal") {
+      console.log(`[Nova] modelMode=${modelMode.level} (downgrade active)`);
+    }
+
     // --- Mode router ---
     if (currentMode === "anketa") {
       sendTyping(chatId).catch(() => {});
@@ -340,6 +382,8 @@ module.exports = async function handler(req, res) {
       console.log(`[anketa] history=${histForAi.length} msgs, calling Sonnet`);
       const reply = await chatAnketa(histForAi, userText);
       console.log(`[anketa] AI ${Date.now() - t0}ms, len=${reply.length}`);
+      const u = getLastUsage();
+      recordTokens(participant, u.input, u.output, u.model).catch(() => {});
       try {
         await saveMessage(chatId, "assistant", reply, participant.id);
       } catch (e) {
@@ -366,10 +410,12 @@ module.exports = async function handler(req, res) {
 
     const t1 = Date.now();
     const reply = await converse(systemPrompt, [], userText, {
-      model: "anthropic/claude-haiku-4-5",
+      model: modelMode.model,
       maxTokens: 1000,
     });
     console.log(`[Nova] AI ${Date.now() - t1}ms, len=${reply.length}`);
+    const u = getLastUsage();
+    recordTokens(participant, u.input, u.output, u.model).catch(() => {});
 
     await respond(reply, KB_NOVA());
     return res.status(200).json({ ok: true });
