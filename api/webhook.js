@@ -133,12 +133,22 @@ module.exports = async function handler(req, res) {
   try {
     // --- /start ---
     if (text === "/start") {
-      await ensureParticipantByChat(chatId, fromName, fromHandle);
-      await sendMessage(
-        chatId,
-        `Привет! Я *Nova* — AI-ассистент NextGen Club.\n\nЯ помогу тебе:\n• Найти нужного человека или ресурс в сообществе\n• Подобрать связку, партнёра, эксперта\n• Заполнить твой профиль, чтобы тебя тоже находили\n\nВыбери внизу что хочешь делать. По умолчанию я в режиме поиска — просто пиши вопрос.`,
-        { replyKeyboard: novaKeyboard(false) }
-      );
+      const p = await ensureParticipantByChat(chatId, fromName, fromHandle);
+      const isNew = prop(p, "Статус") !== "Активный";
+      if (isNew) {
+        await setParticipantMode(p.id, "anketa", "A. Кто ты");
+        sendTyping(chatId).catch(() => {});
+        const kickoffPrompt = "Старт анкеты. Поприветствуй тёплым тоном, представься как Nova — коннектор NextGen Club. Скажи, что поиск связок откроется сразу после заполнения профиля, и начни с первого вопроса блока А (имя, город).";
+        const reply = await chatAnketa([], kickoffPrompt);
+        await saveMessage(chatId, "assistant", reply, p.id);
+        await sendMessage(chatId, reply, { replyKeyboard: anketaKeyboard(false) });
+      } else {
+        await sendMessage(
+          chatId,
+          `Привет! Я *Nova* — AI-ассистент NextGen Club.\n\nЯ помогу тебе:\n• Найти нужного человека или ресурс в сообществе\n• Подобрать связку, партнёра, эксперта\n• Заполнить твой профиль, чтобы тебя тоже находили\n\nВыбери внизу что хочешь делать. По умолчанию я в режиме поиска — просто пиши вопрос.`,
+          { replyKeyboard: novaKeyboard(false) }
+        );
+      }
       return res.status(200).json({ ok: true });
     }
 
@@ -253,6 +263,7 @@ module.exports = async function handler(req, res) {
     // Дефолтная роль для новых — Гость (Founder/VIP проставляются вручную)
     ensureRole(participant, "Гость").catch(() => {});
     const currentMode = prop(participant, "Режим") || "nova";
+    const profileComplete = prop(participant, "Статус") === "Активный";
     let voiceOff = !!prop(participant, "Голос выкл");
     const KB_NOVA = () => novaKeyboard(voiceOff);
     const KB_ANKETA = () => anketaKeyboard(voiceOff);
@@ -286,6 +297,14 @@ module.exports = async function handler(req, res) {
 
     // --- Button: switch to NOVA ---
     if (userText === BUTTONS.NOVA || userText === BUTTONS.BACK) {
+      if (!profileComplete) {
+        await sendMessage(
+          chatId,
+          "Поиск связок откроется после того, как заполнишь профиль. Давай продолжим — осталось немного 🙂",
+          { replyKeyboard: KB_ANKETA() }
+        );
+        return res.status(200).json({ ok: true });
+      }
       await setParticipantMode(participant.id, "nova", null);
       await sendMessage(
         chatId,
@@ -394,6 +413,19 @@ module.exports = async function handler(req, res) {
     }
 
     // --- Default mode: NOVA ---
+    // Блокируем nova пока профиль не заполнен
+    if (!profileComplete) {
+      if (currentMode !== "anketa") {
+        await setParticipantMode(participant.id, "anketa", "A. Кто ты");
+      }
+      await sendMessage(
+        chatId,
+        "Чтобы я могла искать тебе связки — сначала заполним профиль. Напиши что-нибудь или нажми *📝 Заполнить профиль* — и начнём.",
+        { replyKeyboard: KB_ANKETA() }
+      );
+      return res.status(200).json({ ok: true });
+    }
+
     sendTyping(chatId).catch(() => {});
     const t0 = Date.now();
     let snapshot = "";
