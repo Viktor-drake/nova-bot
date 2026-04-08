@@ -42,6 +42,34 @@ async function notionApi(method, url, body) {
   return JSON.parse(text);
 }
 
+// === ДАННЫЕ-МИГРАЦИИ (data seeds) ===
+// Каждый seed — функция, которая обновляет конкретные записи. Идемпотентна.
+const SEEDS = [
+  {
+    name: "Виктор → Founder",
+    db: "b056e256-a4c5-4aa5-8569-abdca291c2a3",
+    async run() {
+      const r = await notionApi("POST", `/databases/${this.db}/query`, {
+        filter: { property: "Chat ID", rich_text: { equals: "296286990" } },
+      });
+      if (!r.results.length) {
+        console.log("  ⚠ участник с Chat ID 296286990 не найден — пропускаю");
+        return;
+      }
+      const page = r.results[0];
+      const currentRole = page.properties?.["Роль"]?.select?.name;
+      if (currentRole === "Founder") {
+        console.log("  ✓ уже Founder");
+        return;
+      }
+      await notionApi("PATCH", `/pages/${page.id}`, {
+        properties: { "Роль": { select: { name: "Founder" } } },
+      });
+      console.log(`  ✅ роль установлена: Founder (была: ${currentRole || "—"})`);
+    },
+  },
+];
+
 // === КАТАЛОГ МИГРАЦИЙ ===
 // Дописывай новые миграции в массив. Каждая = объект:
 // { db: '<id>', name: '<имя для лога>', properties: { ...patch... } }
@@ -100,6 +128,16 @@ async function runMigration(m) {
       await runMigration(m);
     } catch (e) {
       console.error(`❌ ${m.name}: ${e.message}`);
+      process.exitCode = 1;
+    }
+  }
+  console.log("\n🌱 Data seeds");
+  for (const s of SEEDS) {
+    try {
+      console.log(`\n→ ${s.name}`);
+      await s.run();
+    } catch (e) {
+      console.error(`❌ ${s.name}: ${e.message}`);
       process.exitCode = 1;
     }
   }
