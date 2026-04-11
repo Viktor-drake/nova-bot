@@ -416,7 +416,7 @@ module.exports = async function handler(req, res) {
       sendMessage(chatId, quota.warning).catch(() => {});
     }
     // Текущий режим модели с учётом месячного капа
-    const modelMode = getModelMode();
+    const modelMode = await getModelMode();
     if (modelMode.level !== "normal") {
       console.log(`[Nova] modelMode=${modelMode.level} (downgrade active)`);
     }
@@ -459,6 +459,16 @@ module.exports = async function handler(req, res) {
         { replyKeyboard: KB_ANKETA() }
       );
       return res.status(200).json({ ok: true });
+    }
+
+    // --- Проверка лимита поиска для Гостей ---
+    const searchQuota = await checkAndConsumeQuota(participant, "search");
+    if (!searchQuota.ok) {
+      await sendMessage(chatId, searchQuota.reason, { replyKeyboard: KB_NOVA() });
+      return res.status(200).json({ ok: true, blocked: "search_quota" });
+    }
+    if (searchQuota.warning) {
+      sendMessage(chatId, searchQuota.warning).catch(() => {});
     }
 
     sendTyping(chatId).catch(() => {});
