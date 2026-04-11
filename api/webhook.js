@@ -155,8 +155,39 @@ module.exports = async function handler(req, res) {
     if (text === "/help") {
       await sendMessage(
         chatId,
-        `Кнопки внизу:\n• 🧠 *Спросить Nova* — поиск людей, ресурсов, связок\n• 📝 *Заполнить / дополнить профиль* — анкета (15-20 мин), чтобы тебя могли находить\n\nАдмин-команды:\n/find_matches — прогнать матчинг\n/my_deals — мои сделки`,
+        `Кнопки внизу:\n• 🧠 *Спросить Nova* — поиск людей, ресурсов, связок\n• 📝 *Заполнить / дополнить профиль* — анкета (15-20 мин), чтобы тебя могли находить\n\n/limits — мои лимиты\n\nАдмин-команды:\n/find_matches — прогнать матчинг\n/my_deals — мои сделки`,
         { replyKeyboard: novaKeyboard(false) }
+      );
+      return res.status(200).json({ ok: true });
+    }
+
+    // --- /limits ---
+    if (text === "/limits") {
+      const p = await findParticipantByChatId(chatId);
+      if (!p) {
+        await sendMessage(chatId, "Не нашла твой профиль. Напиши /start чтобы зарегистрироваться.");
+        return res.status(200).json({ ok: true });
+      }
+      const role = p.properties?.["Роль"]?.select?.name || "Гость";
+      const quota = { "Гость": { msgs: 200, voice: 60, tokens: 400_000 }, "Участник": { msgs: 200, voice: 60, tokens: 400_000 }, "VIP": { msgs: 500, voice: 150, tokens: 1_000_000 }, "Founder": { msgs: Infinity, voice: Infinity, tokens: Infinity } }[role] || { msgs: 200, voice: 60, tokens: 400_000 };
+      const today = new Date().toISOString().slice(0, 10);
+      const resetDate = p.properties?.quota_reset?.date?.start;
+      const isToday = resetDate === today;
+      const msgsUsed   = isToday ? (p.properties?.msgs_today?.number || 0) : 0;
+      const voiceUsed  = isToday ? (p.properties?.voice_today?.number || 0) : 0;
+      const tokensUsed = isToday ? (p.properties?.tokens_today?.number || 0) : 0;
+      const fmtNum = (n) => isFinite(n) ? n.toLocaleString("ru-RU") : "∞";
+      const bar = (used, total) => {
+        if (!isFinite(total)) return "∞";
+        const pct = Math.round(used / total * 10);
+        return "█".repeat(pct) + "░".repeat(10 - pct) + ` ${used}/${fmtNum(total)}`;
+      };
+      await sendMessage(chatId,
+        `📊 *Мои лимиты* — ${role}\n\n` +
+        `💬 Сообщения\n${bar(msgsUsed, quota.msgs)}\n\n` +
+        `🎤 Голосовые\n${bar(voiceUsed, quota.voice)}\n\n` +
+        `🔤 Токены\n${bar(tokensUsed, quota.tokens)}\n\n` +
+        `♻️ Сбросится: завтра в 00:00 UTC`
       );
       return res.status(200).json({ ok: true });
     }
@@ -379,6 +410,10 @@ module.exports = async function handler(req, res) {
       const kb = currentMode === "anketa" ? KB_ANKETA() : KB_NOVA();
       await sendMessage(chatId, quota.reason, { replyKeyboard: kb });
       return res.status(200).json({ ok: true, blocked: "quota" });
+    }
+    // Предупреждение 80% — отправляем тихо, не блокируем ответ
+    if (quota.warning) {
+      sendMessage(chatId, quota.warning).catch(() => {});
     }
     // Текущий режим модели с учётом месячного капа
     const modelMode = getModelMode();
