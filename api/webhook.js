@@ -505,9 +505,13 @@ module.exports = async function handler(req, res) {
     await respond(reply, KB_NOVA());
     return res.status(200).json({ ok: true });
   } catch (error) {
-    console.error(`[Nova] ERROR: ${error.message}\nStack: ${error.stack?.slice(0,500)}`);
+    const isNotion = error.name === "APIResponseError" || error.message?.includes("notion") || error.code === "notionhq_client_request_timeout";
+    const errMsg = isNotion
+      ? `⚠️ Нет связи с базой данных (Notion). Подожди минуту и попробуй ещё раз.\n\n_Код: ${error.code || error.status || "?"}_`
+      : `Произошла ошибка. Попробуй ещё раз.\n\n_${error.message?.slice(0, 80)}_`;
+    console.error(`[Nova] ERROR name=${error.name} code=${error.code} status=${error.status}: ${error.message}`);
     try {
-      await sendMessage(chatId, "Произошла ошибка. Попробуй ещё раз.");
+      await sendMessage(chatId, errMsg);
     } catch (_) {}
     return res.status(200).json({ ok: false, error: error.message });
   }
