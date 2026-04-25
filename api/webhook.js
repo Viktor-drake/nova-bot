@@ -293,10 +293,12 @@ module.exports = async function handler(req, res) {
     if (!userText) return res.status(200).json({ ok: true });
 
     // --- Ensure participant + load mode ---
+    console.log(`[Nova] step=participant-lookup chat=${chatId}`);
     let participant = await findParticipantByChatId(chatId);
     if (!participant) {
       participant = await ensureParticipantByChat(chatId, fromName, fromHandle);
     }
+    console.log(`[Nova] step=participant-ok mode=${prop(participant, "Режим") || "nova"}`);
     // Дефолтная роль для новых — Гость (Founder/VIP проставляются вручную)
     ensureRole(participant, "Гость").catch(() => {});
     const currentMode = prop(participant, "Режим") || "nova";
@@ -410,6 +412,7 @@ module.exports = async function handler(req, res) {
     }
 
     // --- Quota check (только для AI-сообщений, не для кнопок/команд) ---
+    console.log(`[Nova] step=quota-check kind=${voiceText ? "voice" : "text"}`);
     const quotaKind = voiceText ? "voice" : "text";
     const quota = await checkAndConsumeQuota(participant, quotaKind);
     if (!quota.ok) {
