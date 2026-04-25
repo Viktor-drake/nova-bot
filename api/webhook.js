@@ -481,6 +481,11 @@ module.exports = async function handler(req, res) {
     let snapshot = "";
     try {
       snapshot = await getCommunitySnapshot();
+      // Ограничиваем snapshot: модель имеет ~10500 токенов, промпт ~500, остаток ~7000 ≈ 28000 символов
+      const SNAPSHOT_LIMIT = 24000;
+      if (snapshot.length > SNAPSHOT_LIMIT) {
+        snapshot = snapshot.slice(0, SNAPSHOT_LIMIT) + "\n...[данные обрезаны из-за лимита]";
+      }
       console.log(`[Nova] snapshot ${Date.now() - t0}ms (${snapshot.length} chars)`);
     } catch (e) {
       console.warn(`[Nova] snapshot failed: ${e.message}`);
