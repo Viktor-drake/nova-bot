@@ -439,7 +439,12 @@ module.exports = async function handler(req, res) {
       } catch (e) {
         console.warn(`[anketa] save user msg failed: ${e.message}`);
       }
-      const history = await getRecentMessages(chatId, 50);
+      let history = [];
+      try {
+        history = await getRecentMessages(chatId, 50);
+      } catch (e) {
+        console.warn(`[anketa] getRecentMessages failed: ${e.message}`);
+      }
       // history already includes the user msg we just saved; remove last to avoid duplicate
       const histForAi = history.slice(0, -1);
       console.log(`[anketa] history=${histForAi.length} msgs, calling Sonnet`);
