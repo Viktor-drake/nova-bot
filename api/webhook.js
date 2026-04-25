@@ -487,18 +487,17 @@ module.exports = async function handler(req, res) {
       console.warn(`[Nova] snapshot failed: ${e.message}`);
     }
 
-    const voiceContext = voiceText
-      ? `\n\n[СИСТЕМНАЯ ЗАМЕТКА: Пользователь написал ГОЛОСОВЫМ сообщением. Текст выше — это автоматическая расшифровка его аудио. Твой ответ БУДЕТ автоматически озвучен голосом shimmer и отправлен как аудио. Отвечай по существу, не упоминай голос — он придёт сам.]`
-      : "";
-
     const systemPrompt = snapshot
-      ? `${SYSTEM_PROMPT_BASE}${voiceContext}\n\n=== БАЗА УЧАСТНИКОВ СООБЩЕСТВА ===\n${snapshot}\n=== КОНЕЦ БАЗЫ ===\n\nИспользуй ТОЛЬКО эту базу.`
-      : `${SYSTEM_PROMPT_BASE}${voiceContext}`;
+      ? `${SYSTEM_PROMPT_BASE}\n\n=== БАЗА УЧАСТНИКОВ СООБЩЕСТВА ===\n${snapshot}\n=== КОНЕЦ БАЗЫ ===\n\nИспользуй ТОЛЬКО эту базу.`
+      : SYSTEM_PROMPT_BASE;
+
+    // Для голосовых — короткий ответ (быстрее TTS, меньше шанс таймаута)
+    const maxTokens = voiceText ? 400 : 1000;
 
     const t1 = Date.now();
     const reply = await converse(systemPrompt, [], userText, {
       model: modelMode.model,
-      maxTokens: 1000,
+      maxTokens,
     });
     console.log(`[Nova] AI ${Date.now() - t1}ms, len=${reply.length}`);
     const u = getLastUsage();
