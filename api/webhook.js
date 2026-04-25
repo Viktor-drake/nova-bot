@@ -300,7 +300,7 @@ module.exports = async function handler(req, res) {
     const KB_ANKETA = () => anketaKeyboard(voiceOff);
     const maybeVoice = async (text) => {
       // Глобальный downgrade месячного капа отключает TTS
-      const mm = getModelMode();
+      const mm = await getModelMode();
       if (voiceText && !voiceOff && mm.allowTTS) {
         try { await sendVoice(chatId, await synthesizeVoice(text)); return true; }
         catch (e) { console.error("[tts]", e.message); return false; }
