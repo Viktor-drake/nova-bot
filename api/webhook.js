@@ -507,7 +507,7 @@ module.exports = async function handler(req, res) {
     await respond(reply, KB_NOVA());
     return res.status(200).json({ ok: true });
   } catch (error) {
-    console.error(`[Nova] ERROR: ${error.message}`);
+    console.error(`[Nova] ERROR: ${error.message}\nStack: ${error.stack?.slice(0,500)}`);
     try {
       await sendMessage(chatId, "Произошла ошибка. Попробуй ещё раз.");
     } catch (_) {}
