@@ -481,10 +481,11 @@ module.exports = async function handler(req, res) {
     let snapshot = "";
     try {
       snapshot = await getCommunitySnapshot();
-      // Ограничиваем snapshot: модель имеет ~10500 токенов, промпт ~500, остаток ~7000 ≈ 28000 символов
-      const SNAPSHOT_LIMIT = 24000;
+      // Ограничиваем snapshot: Кириллица ~1 символ/токен, лимит OpenRouter ~10500 токенов
+      // Системный промпт ~500 + ответ ~1000 = оставляем ~8000 токенов ≈ 8000 символов для базы
+      const SNAPSHOT_LIMIT = 8000;
       if (snapshot.length > SNAPSHOT_LIMIT) {
-        snapshot = snapshot.slice(0, SNAPSHOT_LIMIT) + "\n...[данные обрезаны из-за лимита]";
+        snapshot = snapshot.slice(0, SNAPSHOT_LIMIT) + "\n...[список обрезан, остальные участники не показаны]";
       }
       console.log(`[Nova] snapshot ${Date.now() - t0}ms (${snapshot.length} chars)`);
     } catch (e) {
