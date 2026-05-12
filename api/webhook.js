@@ -369,13 +369,19 @@ module.exports = async function handler(req, res) {
         await sendMessage(chatId, "Ты сейчас не в режиме анкеты. Нажми 📝 чтобы начать.", { replyKeyboard: KB_NOVA() });
         return res.status(200).json({ ok: true });
       }
-      await sendMessage(chatId, "💾 Сохраняю и извлекаю данные... 20-40 секунд.");
+      // CRITICAL: Переключаем режим в "nova" СРАЗУ — чтобы Telegram-ретраи (если функция долго отвечает)
+      // не попали повторно в эту ветку. Также сразу шлём 200 чтобы Telegram не повторял webhook.
+      await setParticipantMode(participant.id, "nova", null);
+      sendMessage(chatId, "💾 Сохраняю и извлекаю данные... 20-40 секунд.").catch(() => {});
+      // Отвечаем Telegram немедленно — фоновая работа продолжится в этой же лямбде до maxDuration: 60
+      res.status(200).json({ ok: true, processing: "anketa-finish-bg" });
+
+      // Фоновая обработка (Vercel держит функцию живой до завершения промисов или maxDuration)
       try {
         const history = await getRecentMessages(chatId, 100);
         if (!history.length) {
           await sendMessage(chatId, "Пока нечего сохранять — диалога анкеты ещё нет.", { replyKeyboard: KB_NOVA() });
-          await setParticipantMode(participant.id, "nova", null);
-          return res.status(200).json({ ok: true });
+          return;
         }
         const parsed = await extractFromDialog(history);
         const stats = await writeAnketaResults(participant.id, parsed);
@@ -388,8 +394,6 @@ module.exports = async function handler(req, res) {
           properties: { Статус: { select: { name: newStatus } } },
         });
 
-        await setParticipantMode(participant.id, "nova", null);
-
         const completenessLines = parsed.completeness
           ? Object.entries(parsed.completeness)
               .filter(([k]) => k !== "average")
@@ -401,9 +405,9 @@ module.exports = async function handler(req, res) {
         await sendMessage(chatId, summary, { replyKeyboard: KB_NOVA() });
       } catch (e) {
         console.error(`[anketa] finish error: ${e.message}`);
-        await sendMessage(chatId, `❌ Ошибка при сохранении: ${e.message}\n\nДанные не потеряны — попробуй ещё раз через минуту.`);
+        await sendMessage(chatId, `❌ Ошибка при сохранении: ${e.message}\n\nДанные не потеряны — попробуй ещё раз через минуту.`).catch(() => {});
       }
-      return res.status(200).json({ ok: true });
+      return;
     }
 
     // --- Quota check (только для AI-сообщений, не для кнопок/команд) ---
