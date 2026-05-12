@@ -35,6 +35,9 @@ const {
 // --- Admin chat IDs ---
 const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "").split(",").map((s) => s.trim()).filter(Boolean);
 
+// --- In-memory guard: предотвращает повторный запуск анкеты-FINISH для одного chatId ---
+const finishInProgress = new Set();
+
 // --- Base system prompt for Nova ---
 const SYSTEM_PROMPT_BASE = `Ты — Nova, девушка-коннектор бизнес-сообщества NextGen Club. Ты ВСЕГДА говоришь о себе в женском роде ("я нашла", "я подумала", "сама посмотрела", "рада помочь"). Никогда не мужской род.
 
@@ -369,18 +372,24 @@ module.exports = async function handler(req, res) {
         await sendMessage(chatId, "Ты сейчас не в режиме анкеты. Нажми 📝 чтобы начать.", { replyKeyboard: KB_NOVA() });
         return res.status(200).json({ ok: true });
       }
-      // CRITICAL: Переключаем режим в "nova" СРАЗУ — чтобы Telegram-ретраи (если функция долго отвечает)
-      // не попали повторно в эту ветку. Также сразу шлём 200 чтобы Telegram не повторял webhook.
-      await setParticipantMode(participant.id, "nova", null);
+      // Защита от повторного FINISH (юзер дважды нажал / Telegram ретрай) — пока обрабатываем, игнорируем дубликаты
+      if (finishInProgress.has(chatId)) {
+        sendMessage(chatId, "Уже обрабатываю предыдущий запрос, подожди ещё немного 🤍").catch(() => {});
+        return res.status(200).json({ ok: true, blocked: "finish-in-progress" });
+      }
+      finishInProgress.add(chatId);
+
       sendMessage(chatId, "💾 Сохраняю и извлекаю данные... 20-40 секунд.").catch(() => {});
       // Отвечаем Telegram немедленно — фоновая работа продолжится в этой же лямбде до maxDuration: 60
       res.status(200).json({ ok: true, processing: "anketa-finish-bg" });
 
       // Фоновая обработка (Vercel держит функцию живой до завершения промисов или maxDuration)
       try {
-        const history = await getRecentMessages(chatId, 100);
+        // Уменьшаем выборку до 50 — быстрее и устойчивее к таймаутам Notion
+        const history = await getRecentMessages(chatId, 50);
         if (!history.length) {
           await sendMessage(chatId, "Пока нечего сохранять — диалога анкеты ещё нет.", { replyKeyboard: KB_NOVA() });
+          await setParticipantMode(participant.id, "nova", null).catch(() => {});
           return;
         }
         const parsed = await extractFromDialog(history);
@@ -394,6 +403,9 @@ module.exports = async function handler(req, res) {
           properties: { Статус: { select: { name: newStatus } } },
         });
 
+        // Переключаем режим ТОЛЬКО ПОСЛЕ успешного сохранения
+        await setParticipantMode(participant.id, "nova", null);
+
         const completenessLines = parsed.completeness
           ? Object.entries(parsed.completeness)
               .filter(([k]) => k !== "average")
@@ -405,7 +417,10 @@ module.exports = async function handler(req, res) {
         await sendMessage(chatId, summary, { replyKeyboard: KB_NOVA() });
       } catch (e) {
         console.error(`[anketa] finish error: ${e.message}`);
+        // Режим остаётся "anketa" чтобы юзер мог нажать FINISH ещё раз
         await sendMessage(chatId, `❌ Ошибка при сохранении: ${e.message}\n\nДанные не потеряны — попробуй ещё раз через минуту.`).catch(() => {});
+      } finally {
+        finishInProgress.delete(chatId);
       }
       return;
     }
