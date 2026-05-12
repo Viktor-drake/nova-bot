@@ -372,25 +372,22 @@ module.exports = async function handler(req, res) {
         await sendMessage(chatId, "Ты сейчас не в режиме анкеты. Нажми 📝 чтобы начать.", { replyKeyboard: KB_NOVA() });
         return res.status(200).json({ ok: true });
       }
-      // Защита от повторного FINISH (юзер дважды нажал / Telegram ретрай) — пока обрабатываем, игнорируем дубликаты
+      // Защита от повторных FINISH (Telegram ретрай / двойной клик) — в этой же лямбде блокирует дубль
       if (finishInProgress.has(chatId)) {
-        sendMessage(chatId, "Уже обрабатываю предыдущий запрос, подожди ещё немного 🤍").catch(() => {});
+        await sendMessage(chatId, "Уже обрабатываю твою анкету, подожди ещё немного 🤍");
         return res.status(200).json({ ok: true, blocked: "finish-in-progress" });
       }
       finishInProgress.add(chatId);
 
-      sendMessage(chatId, "💾 Сохраняю и извлекаю данные... 20-40 секунд.").catch(() => {});
-      // Отвечаем Telegram немедленно — фоновая работа продолжится в этой же лямбде до maxDuration: 60
-      res.status(200).json({ ok: true, processing: "anketa-finish-bg" });
-
-      // Фоновая обработка (Vercel держит функцию живой до завершения промисов или maxDuration)
+      // ВНИМАНИЕ: всё делаем синхронно ДО res.json() — Vercel замораживает функцию после ответа,
+      // fire-and-forget после res.json() не работает на Vercel
+      await sendMessage(chatId, "💾 Сохраняю и извлекаю данные... 20-40 секунд.");
       try {
-        // Уменьшаем выборку до 50 — быстрее и устойчивее к таймаутам Notion
         const history = await getRecentMessages(chatId, 50);
         if (!history.length) {
           await sendMessage(chatId, "Пока нечего сохранять — диалога анкеты ещё нет.", { replyKeyboard: KB_NOVA() });
           await setParticipantMode(participant.id, "nova", null).catch(() => {});
-          return;
+          return res.status(200).json({ ok: true });
         }
         const parsed = await extractFromDialog(history);
         const stats = await writeAnketaResults(participant.id, parsed);
@@ -417,12 +414,12 @@ module.exports = async function handler(req, res) {
         await sendMessage(chatId, summary, { replyKeyboard: KB_NOVA() });
       } catch (e) {
         console.error(`[anketa] finish error: ${e.message}`);
-        // Режим остаётся "anketa" чтобы юзер мог нажать FINISH ещё раз
+        // Режим остаётся "anketa" — юзер сможет нажать FINISH ещё раз
         await sendMessage(chatId, `❌ Ошибка при сохранении: ${e.message}\n\nДанные не потеряны — попробуй ещё раз через минуту.`).catch(() => {});
       } finally {
         finishInProgress.delete(chatId);
       }
-      return;
+      return res.status(200).json({ ok: true });
     }
 
     // --- Quota check (только для AI-сообщений, не для кнопок/команд) ---
