@@ -72,6 +72,7 @@ function isButton(text) {
 async function writeAnketaResults(participantId, parsed) {
   const stats = { resources: 0, needs: 0, profileUpdated: false };
 
+  // Профиль — отдельно (один запрос)
   if (parsed.профиль) {
     try {
       await updateParticipantProfile(participantId, parsed.профиль);
@@ -81,23 +82,20 @@ async function writeAnketaResults(participantId, parsed) {
     }
   }
 
-  for (const r of parsed.ресурсы || []) {
-    try {
-      await createResource({ ownerId: participantId, ...r });
-      stats.resources += 1;
-    } catch (e) {
-      console.warn(`[anketa] resource create failed: ${e.message} | ${JSON.stringify(r)}`);
-    }
-  }
+  // Ресурсы и потребности — параллельно (Promise.allSettled чтобы один фейл не блокировал остальные)
+  // Это превращает 20+ последовательных Notion-вызовов (по 1-2с каждый) в ~3-5 секунд общего времени
+  const resourcePromises = (parsed.ресурсы || []).map((r) =>
+    createResource({ ownerId: participantId, ...r })
+      .then(() => { stats.resources += 1; })
+      .catch((e) => console.warn(`[anketa] resource create failed: ${e.message} | ${JSON.stringify(r)}`))
+  );
+  const needPromises = (parsed.потребности || []).map((n) =>
+    createNeed({ authorId: participantId, ...n })
+      .then(() => { stats.needs += 1; })
+      .catch((e) => console.warn(`[anketa] need create failed: ${e.message} | ${JSON.stringify(n)}`))
+  );
 
-  for (const n of parsed.потребности || []) {
-    try {
-      await createNeed({ authorId: participantId, ...n });
-      stats.needs += 1;
-    } catch (e) {
-      console.warn(`[anketa] need create failed: ${e.message} | ${JSON.stringify(n)}`);
-    }
-  }
+  await Promise.allSettled([...resourcePromises, ...needPromises]);
 
   return stats;
 }
