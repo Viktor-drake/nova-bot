@@ -4,6 +4,7 @@ const { synthesizeVoice } = require("../lib/tts");
 const { converse, getLastUsage } = require("../lib/ai");
 const {
   getCommunitySnapshot,
+  invalidateSnapshotCache,
   notion,
   DB,
   findParticipantByChatId,
@@ -401,6 +402,9 @@ module.exports = async function handler(req, res) {
         // Переключаем режим ТОЛЬКО ПОСЛЕ успешного сохранения
         await setParticipantMode(participant.id, "nova", null);
 
+        // Сбрасываем кэш snapshot — чтобы свежие данные участника сразу попали в Nova-контекст
+        invalidateSnapshotCache();
+
         const completenessLines = parsed.completeness
           ? Object.entries(parsed.completeness)
               .filter(([k]) => k !== "average")
@@ -503,9 +507,14 @@ module.exports = async function handler(req, res) {
       console.warn(`[Nova] snapshot failed: ${e.message}`);
     }
 
+    // Идентификация текущего собеседника — чтобы Nova знала кто пишет и не переспрашивала "расскажи о себе"
+    const userName = prop(participant, "Имя") || fromName;
+    const userHandle = prop(participant, "Telegram") || fromHandle;
+    const userIdentity = `=== КТО СЕЙЧАС ПИШЕТ ТЕБЕ ===\nИмя: ${userName}${userHandle ? ` (@${userHandle.replace(/^@/, "")})` : ""}\nНайди этого участника в базе ниже — у тебя ЕСТЬ все его данные: суперсила, проект, ресурсы, потребности. Не переспрашивай "что ты умеешь" или "расскажи о себе" — всё уже в базе. Опирайся на ЕГО профиль когда отвечаешь на вопросы типа "кому я могу быть полезен", "что мне предложить клубу", "найди мне партнёра".`;
+
     const systemPrompt = snapshot
-      ? `${SYSTEM_PROMPT_BASE}\n\n=== БАЗА УЧАСТНИКОВ СООБЩЕСТВА ===\n${snapshot}\n=== КОНЕЦ БАЗЫ ===\n\nИспользуй ТОЛЬКО эту базу.`
-      : SYSTEM_PROMPT_BASE;
+      ? `${SYSTEM_PROMPT_BASE}\n\n${userIdentity}\n\n=== БАЗА УЧАСТНИКОВ СООБЩЕСТВА ===\n${snapshot}\n=== КОНЕЦ БАЗЫ ===\n\nИспользуй ТОЛЬКО эту базу.`
+      : `${SYSTEM_PROMPT_BASE}\n\n${userIdentity}`;
 
     // Для голосовых — короткий ответ (быстрее TTS, меньше шанс таймаута)
     const maxTokens = voiceText ? 400 : 1000;
