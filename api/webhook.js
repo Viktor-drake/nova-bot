@@ -391,9 +391,9 @@ module.exports = async function handler(req, res) {
         const parsed = await extractFromDialog(history);
         const stats = await writeAnketaResults(participant.id, parsed);
 
-        // Activate participant if completeness ok
+        // Activate participant if completeness ok (порог снижен с 7.0 до 6.0)
         const avg = parsed.completeness?.average ?? 0;
-        const newStatus = avg >= 7 ? "Активный" : "Новый";
+        const newStatus = avg >= 6 ? "Активный" : "Новый";
         await notion.pages.update({
           page_id: participant.id,
           properties: { Статус: { select: { name: newStatus } } },
@@ -412,7 +412,7 @@ module.exports = async function handler(req, res) {
               .join("\n")
           : "";
 
-        const summary = `✅ Сохранено!\n\n📦 Ресурсов: ${stats.resources}\n🎯 Потребностей: ${stats.needs}\n👤 Профиль обновлён: ${stats.profileUpdated ? "да" : "нет"}\n\n*Глубина по блокам:*\n${completenessLines}\nСредняя: ${avg}/10\n\nСтатус: ${newStatus}\n${avg < 7 ? "\n⚠️ Анкета поверхностная. Нажми 📝 ещё раз чтобы дозаполнить — без этого матчи будут слабые." : "\n🔥 Профиль готов для матчинга. Спроси меня что-то или жми /find_matches."}`;
+        const summary = `✅ Сохранено!\n\n📦 Ресурсов: ${stats.resources}\n🎯 Потребностей: ${stats.needs}\n👤 Профиль обновлён: ${stats.profileUpdated ? "да" : "нет"}\n\n*Глубина по блокам:*\n${completenessLines}\nСредняя: ${avg}/10\n\nСтатус: ${newStatus}\n${avg < 6 ? "\n⚠️ Анкета поверхностная. Нажми 📝 ещё раз чтобы дозаполнить — без этого матчи будут слабые." : "\n🔥 Профиль готов для матчинга. Спроси меня что-то или жми /find_matches."}`;
         await sendMessage(chatId, summary, { replyKeyboard: KB_NOVA() });
       } catch (e) {
         console.error(`[anketa] finish error: ${e.message}`);
